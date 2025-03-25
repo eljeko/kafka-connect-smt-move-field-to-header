@@ -6,7 +6,9 @@ This SMT moves/copy field to header
 
 ```mvn clean package```
 
-Then copy the zip file from:
+# Install
+
+Copy the zip file from:
 
 ```target/components/packages/common-smt-kafka-smt-move-to-header-1.0.zip```
 
