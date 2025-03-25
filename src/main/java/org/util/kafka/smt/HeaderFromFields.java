@@ -48,14 +48,6 @@ import static org.apache.kafka.connect.data.Schema.STRING_SCHEMA;
 
 public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformation<R> {
 
-  public static final String OVERVIEW_DOC = "Replace the record key with a new key formed from a concatenation of fields in the record value.    " +
-          "It works with: " +
-          "   \"key.converter\": \"org.apache.kafka.connect.storage.StringConverter\",\n" +
-          "   \"value.converter\": \"org.apache.kafka.connect.storage.StringConverter\",\n" +
-          "   \"key.converter.schemas.enable\": false,\n" +
-          "   \"value.converter.schemas.enable\": false,";
-
-  public static final String FIELDS_CONFIG = "fields";
   public static final String JSON_PATHS = "jsonpaths";
   public static final String HEADERS_NAMES = "headersnames";
   private static final String MODE = "mode";
@@ -67,10 +59,10 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
   public static final ConfigDef CONFIG_DEF = new ConfigDef()
           //.define(
           //   FIELDS_CONFIG, ConfigDef.Type.LIST, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyListValidator(), ConfigDef.Importance.HIGH, "Field names on the record value to extract as the record key.")
-          .define(JSON_PATHS, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyString(), ConfigDef.Importance.HIGH, "xxxx.")
-          .define(HEADERS_NAMES, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyString(), ConfigDef.Importance.HIGH, "bbbb.")
-          .define(MODE, ConfigDef.Type.STRING, "copy", ConfigDef.Importance.LOW, "bbbb.")
-          .define(INPUT_TYPE, ConfigDef.Type.STRING, "raw", ConfigDef.Importance.LOW, "bbbb.");
+          .define(JSON_PATHS, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyString(), ConfigDef.Importance.HIGH, "The comma separated values of the json paths.")
+          .define(HEADERS_NAMES, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyString(), ConfigDef.Importance.HIGH, "The comma separated values of the fields names.")
+          .define(MODE, ConfigDef.Type.STRING, "copy", ConfigDef.Importance.LOW, "The property to define if the field is copied or moved.")
+          .define(INPUT_TYPE, ConfigDef.Type.STRING, "raw", ConfigDef.Importance.LOW, "Define if the source is raw (serialized string representing a json) or a data Kadka Connect Data Struct.");
 
   private static final String PURPOSE = "copying and concat fields from value to key";
 
@@ -115,7 +107,6 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
   }
 
   private String getStructAsString(R record) throws JsonProcessingException {
-
     return Converter.convertStructToJson((Struct) record.value());
 
   }
@@ -123,12 +114,6 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
   private R applySchemaless(R record) throws JsonProcessingException {
 
     String value = "";
-
-
-    System.out.println("RECORD CLASS -> " + record.getClass());
-    System.out.println("RECORD CLASS VALUE -> " + record.value().getClass());
-    System.out.println("RECORD CLASS VALUE .toString() -> " + value);
-    //Get JSONObject from value
 
     if (inputType.equals(INPUT_TYPE_STRUCT)) {
       value = getStructAsString(record);
@@ -138,9 +123,7 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
 
     JSONObject jsonObject = new JSONObject(value);
 
-    //Create a composite key (concat of fields) with Schema as a String
     Schema schemaString = STRING_SCHEMA;
-
     StringBuilder keySb = new StringBuilder();
 
     //Create schema for value
@@ -161,6 +144,7 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
       String key = (String) keyObj;
 
       //Inner json objects are treated as String
+      //todo: improve with recursive json node creation
       if (jsonObject.get(key).getClass().getName().equalsIgnoreCase(JSONObject.class.getName())) {
         JSONObject innerObj = (JSONObject) jsonObject.get(key);
         String innerValue = innerObj.toString();
@@ -178,16 +162,9 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
       String nextJsonPath = jsonPaths.get(i);
       String nextHeaderName = headersNames.get(i);
 
-      String headerValue = null;
-
       try {
-        // Extract "TOHEADER" using JSONPath
-
-        //headerValue = ctx.read(next_json_path, String.class);
-        headerValue = ctx.read(nextJsonPath, String.class);
-        // Add extracted value to Kafka headers
+        String headerValue = ctx.read(nextJsonPath, String.class);
         Headers headers = record.headers();
-        // if (headerValue != null) {
         headers.add(nextHeaderName, headerValue, OPTIONAL_STRING_SCHEMA);
 
         if (mode.equals("move")) {
@@ -204,9 +181,6 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
         LOGGER.warn("Failed to extract TOHEADER field: {}", e.getMessage());
       }
     }
-
-    System.out.println("BEFORE RETURN ->\n\n"+record.headers().toString()+"\n\n" );
-    System.out.println("BEFORE RETURN ->\n\n"+jsonObject.toString()+"\n\n" );
 
     if (mode.equals("move")) {
       if (inputType.equals(INPUT_TYPE_STRUCT)) {
