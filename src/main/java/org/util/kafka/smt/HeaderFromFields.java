@@ -57,16 +57,11 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
 
 
   public static final ConfigDef CONFIG_DEF = new ConfigDef()
-          //.define(
-          //   FIELDS_CONFIG, ConfigDef.Type.LIST, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyListValidator(), ConfigDef.Importance.HIGH, "Field names on the record value to extract as the record key.")
           .define(JSON_PATHS, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyString(), ConfigDef.Importance.HIGH, "The comma separated values of the json paths.")
           .define(HEADERS_NAMES, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, new NonEmptyString(), ConfigDef.Importance.HIGH, "The comma separated values of the fields names.")
           .define(MODE, ConfigDef.Type.STRING, "copy", ConfigDef.Importance.LOW, "The property to define if the field is copied or moved.")
           .define(INPUT_TYPE, ConfigDef.Type.STRING, "raw", ConfigDef.Importance.LOW, "Define if the source is raw (serialized string representing a json) or a data Kadka Connect Data Struct.");
 
-  private static final String PURPOSE = "copying and concat fields from value to key";
-
-  //  private static final Logger LOGGER = LoggerFactory.getLogger(HeaderFromFields.class);
   private static final Logger LOGGER = LoggerFactory.getLogger(HeaderFromFields.class);
 
   private List<String> fields;
@@ -85,7 +80,6 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
 
   @Override
   public void configure(Map<String, ?> configs) {
-    //final SimpleConfig config = new SimpleConfig(CONFIG_DEF, configs);
     jsonPaths = Arrays.stream(((String) configs.get(JSON_PATHS)).split(",")).toList();
     headersNames = Arrays.stream(((String) configs.get(HEADERS_NAMES)).split(",")).toList();
     if (configs.get(MODE) != null) {
@@ -106,7 +100,7 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
     }
   }
 
-  private String getStructAsString(R record) throws JsonProcessingException {
+  private String getStructAsString(R record) {
     return Converter.convertStructToJson((Struct) record.value());
 
   }
@@ -121,39 +115,14 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
       value = record.value().toString();
     }
 
-    JSONObject jsonObject = new JSONObject(value);
+    JSONObject jsonValueObject = new JSONObject(value);
 
-    Schema schemaString = STRING_SCHEMA;
-    StringBuilder keySb = new StringBuilder();
+    Schema keySchemaString = STRING_SCHEMA;
+
+    StringBuilder keyValue = new StringBuilder();
 
     //Create schema for value
-    SchemaBuilder schemaStruct = SchemaBuilder.struct();
-    for (Object keyObj : jsonObject.keySet()) {
-      String key = (String) keyObj;
-      //Inner json objects are treated as String
-      if (jsonObject.get(key) instanceof JSONObject) {
-        schemaStruct.field(key, STRING_SCHEMA).build();
-      } else {
-        schemaStruct.field(key, schemaMapping.get(jsonObject.get(key).getClass().getName())).build();
-      }
-    }
-
-    //Create Struct for value
-    Struct valueStruct = new Struct(schemaStruct.schema());
-    for (Object keyObj : jsonObject.keySet()) {
-      String key = (String) keyObj;
-
-      //Inner json objects are treated as String
-      //todo: improve with recursive json node creation
-      if (jsonObject.get(key).getClass().getName().equalsIgnoreCase(JSONObject.class.getName())) {
-        JSONObject innerObj = (JSONObject) jsonObject.get(key);
-        String innerValue = innerObj.toString();
-        valueStruct.put(key, innerValue);
-
-      } else {
-        valueStruct.put(key, jsonObject.get(key));
-      }
-    }
+    SchemaBuilder schemaForValue = createSchemaForValue(jsonValueObject);
 
     ReadContext ctx = JsonPath.parse(value);
 
@@ -171,7 +140,7 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
           try {
             // Extract the actual field name from JSONPath
             String fieldName = nextJsonPath.replace("$.", "");  // Convert "$.FIELD" -> "FIELD"
-            jsonObject.remove(fieldName);
+            jsonValueObject.remove(fieldName);
           } catch (Exception e) {
             LOGGER.warn("Failed to remove field {}: {}", nextJsonPath, e.getMessage());
           }
@@ -184,17 +153,32 @@ public class HeaderFromFields<R extends ConnectRecord<R>> implements Transformat
 
     if (mode.equals("move")) {
       if (inputType.equals(INPUT_TYPE_STRUCT)) {
-        Schema schema = Converter.inferSchema(new ObjectMapper().readTree(jsonObject.toString()));
-        Struct o1 = Converter.covertJsonToStruc(jsonObject.toString(), schema);
-        return record.newRecord(record.topic(), record.kafkaPartition(), schemaString, keySb.toString(), schemaStruct.schema(), o1, record.timestamp());
-
+        Schema schema = Converter.inferSchema(new ObjectMapper().readTree(jsonValueObject.toString()));
+        Struct structValueObject = Converter.covertJsonToStruc(jsonValueObject.toString(), schema);
+        return record.newRecord(record.topic(), record.kafkaPartition(), keySchemaString, keyValue.toString(), schemaForValue.schema(), structValueObject, record.timestamp());
       } else {
-        return record.newRecord(record.topic(), record.kafkaPartition(), schemaString, keySb.toString(), schemaStruct.schema(), jsonObject.toString(), record.timestamp());
+        return record.newRecord(record.topic(), record.kafkaPartition(), keySchemaString, keyValue.toString(), schemaForValue.schema(), jsonValueObject.toString(), record.timestamp());
       }
 
     } else {
       return record;
     }
+  }
+
+  private SchemaBuilder createSchemaForValue(JSONObject jsonObject) {
+
+    //Create schema for value
+    SchemaBuilder schemaStruct = SchemaBuilder.struct();
+    for (Object keyObj : jsonObject.keySet()) {
+      String key = (String) keyObj;
+      //Inner json objects are treated as String
+      if (jsonObject.get(key) instanceof JSONObject) {
+        schemaStruct.field(key, STRING_SCHEMA).build();
+      } else {
+        schemaStruct.field(key, schemaMapping.get(jsonObject.get(key).getClass().getName())).build();
+      }
+    }
+    return schemaStruct;
   }
 
 
